@@ -1,4 +1,4 @@
-package me.jefferey.clockheads.myapplication;
+package me.jefferey.clockheads;
 
 import android.app.Application;
 import android.test.ApplicationTestCase;
