@@ -16,8 +16,6 @@ public class ClockHeadActivity extends ActionBarActivity implements View.OnClick
         setContentView(R.layout.activity_clock_heads);
         View startButton = findViewById(R.id.ClockHeadsActivity_start_button);
         startButton.setOnClickListener(this);
-        View stopButton = findViewById(R.id.ClockHeadsActivity_stop_button);
-        stopButton.setOnClickListener(this);
     }
 
     @Override
@@ -25,9 +23,6 @@ public class ClockHeadActivity extends ActionBarActivity implements View.OnClick
         switch (clickedView.getId()) {
             case R.id.ClockHeadsActivity_start_button:
                 startClockHead();
-                break;
-            case R.id.ClockHeadsActivity_stop_button:
-                stopClockHead();
                 break;
         }
     }

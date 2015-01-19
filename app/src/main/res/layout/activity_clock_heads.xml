@@ -8,17 +8,9 @@
     <Button
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Start"
+        android:text="Create TImer"
         android:id="@+id/ClockHeadsActivity_start_button"
         android:layout_centerVertical="true"
         android:layout_centerHorizontal="true" />
 
-    <Button
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Stop"
-        android:id="@+id/ClockHeadsActivity_stop_button"
-        android:layout_below="@+id/ClockHeadsActivity_start_button"
-        android:layout_centerHorizontal="true"
-        android:layout_marginTop="68dp" />
 </RelativeLayout>
