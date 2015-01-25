@@ -7,13 +7,13 @@ import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.os.CountDownTimer;
 import android.os.IBinder;
+import android.os.Vibrator;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.ImageView;
 import android.widget.TextView;
 
 import java.util.Locale;
@@ -30,43 +30,33 @@ public class ClockHeadService extends Service {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT);
 
-    // Initialize the layout params for the trash can view
-    private final WindowManager.LayoutParams mRemoveClockLayoutParams = new WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT);
-
+    private final Point mDeletePoint = new Point();
+    private final Point mEditPoint = new Point();
+    private Point mDisplaySize = new Point();
 
     private WindowManager mWindowManager;
     private TextView mClockView;
-    private ImageView mRemoveClockView;
     private CountDownTimer mCurrentCountDownTimer;
-    private long mCurrentTimeRemaining;
+    private Vibrator mVibrator;
 
     @Override
     public IBinder onBind(Intent intent) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        throw new UnsupportedOperationException("Not implemented");
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        Resources res = getResources();
         LayoutInflater inflater = LayoutInflater.from(this);
-        int viewOffset = res.getDimensionPixelOffset(R.dimen.init_clock_top_padding);
         mWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        mVibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+        Display display =  mWindowManager.getDefaultDisplay();
+        display.getSize(mDisplaySize);
+        resetEditPoints();
         mClockView = (TextView) inflater.inflate(R.layout.service_clock_head, null);
         mClockView.setOnTouchListener(mClockTouchListener);
         mClockLayoutParams.gravity = Gravity.TOP | Gravity.LEFT;
-        mClockLayoutParams.y = viewOffset;
         mWindowManager.addView(mClockView, mClockLayoutParams);
-
-        mRemoveClockView = new ImageView(this);
-        mRemoveClockView.setImageResource(R.mipmap.ic_trash);
-        mRemoveClockLayoutParams.gravity = Gravity.CENTER | Gravity.CENTER;
-        mRemoveClockLayoutParams.y = viewOffset;
 
         setTimerFor(100000);
     }
@@ -84,7 +74,6 @@ public class ClockHeadService extends Service {
         mCurrentCountDownTimer = new CountDownTimer(timeInMiliseconds, 1000) {
 
             public void onTick(long millisUntilFinished) {
-                mCurrentTimeRemaining = millisUntilFinished;
                 long secondsUntilFinished = millisUntilFinished / 1000;
                 StringBuilder builder = new StringBuilder();
                 long hours = secondsUntilFinished / 36000;
@@ -97,13 +86,25 @@ public class ClockHeadService extends Service {
                 builder.append(String.format(Locale.US, "%02d", seconds));
                 mClockView.setText(builder.toString());
             }
-
             public void onFinish() {
             }
         };
         mCurrentCountDownTimer.start();
     }
 
+    private void centerClockOn(Point point) {
+        mClockLayoutParams.x = point.x - (mClockView.getWidth() / 2);
+        mClockLayoutParams.y = point.y - (mClockView.getHeight() / 2);
+        mWindowManager.updateViewLayout(mClockView, mClockLayoutParams);
+    }
+
+    private void resetEditPoints() {
+        int displayCenter = mDisplaySize.x / 2;
+        Resources res = getResources();
+        int editEdigeOffset = res.getDimensionPixelSize(R.dimen.edit_edge_offset);
+        mDeletePoint.set(displayCenter, mDisplaySize.y - editEdigeOffset);
+        mEditPoint.set(displayCenter, editEdigeOffset);
+    }
 
     private class ClockOnTouchListener implements View.OnTouchListener {
 
@@ -113,43 +114,84 @@ public class ClockHeadService extends Service {
         private int initialX;
         private int initialY;
 
-        private boolean showingRemoveView;
+        private boolean inDelete;
+        private boolean inEdit;
 
         @Override
         public boolean onTouch(View v, MotionEvent event) {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
-                    initialX = mClockLayoutParams.x;
-                    initialY = mClockLayoutParams.y;
-                    initialTouchX = event.getRawX();
-                    initialTouchY = event.getRawY();
+                    startTracking(event);
                     return false;
                 case MotionEvent.ACTION_UP:
-                    mWindowManager.removeView(mRemoveClockView);
-                    showingRemoveView = false;
+                    resetEditPoints();
+                    if (inDelete) {
+                        deleteClock();
+                    }
                     return false;
                 case MotionEvent.ACTION_MOVE:
-                    mClockLayoutParams.x = initialX + (int) (event.getRawX() - initialTouchX);
-                    mClockLayoutParams.y = initialY + (int) (event.getRawY() - initialTouchY);
-                    mWindowManager.updateViewLayout(mClockView, mClockLayoutParams);
-                    if (!showingRemoveView) {
-                        mWindowManager.addView(mRemoveClockView, mRemoveClockLayoutParams);
-                        showingRemoveView = true;
-                    }
-
-                    Point point = new Point();
-                    Display display =  mWindowManager.getDefaultDisplay();
-                    display.getSize(point);
-                    int bottomOffset = point.y - mClockLayoutParams.y - 300;
-
-                    if ((mClockLayoutParams.x) > -20 && (mClockLayoutParams.x) < 20 && bottomOffset > -320 && bottomOffset < 320) {
-                        mClockView.setBackgroundResource(R.color.red);
+                    if (hasMovedToDelete(event)) {
+                        onTouchInDelete();
+                        inDelete = true;
+                        inEdit = false;
+                    } else if (hasMovedToEdit(event)){
+                        onTouchInEdit();
+                        inDelete = false;
+                        inEdit = true;
                     } else {
-                        mClockView.setBackgroundResource(R.color.transparent_grey);
+                        updateClockPosition(event);
+                        inDelete = false;
+                        inEdit = false;
                     }
                     return true;
             }
             return false;
+        }
+
+        private void deleteClock() {
+            stopSelf();
+        }
+
+        private void startTracking(MotionEvent event) {
+            initialX = mClockLayoutParams.x;
+            initialY = mClockLayoutParams.y;
+            initialTouchX = event.getRawX();
+            initialTouchY = event.getRawY();
+        }
+
+        private void updateClockPosition(MotionEvent event) {
+            mClockLayoutParams.x = initialX + (int) (event.getRawX() - initialTouchX);
+            mClockLayoutParams.y = initialY + (int) (event.getRawY() - initialTouchY);
+            mWindowManager.updateViewLayout(mClockView, mClockLayoutParams);
+        }
+
+        private void onTouchInDelete() {
+            if (!inDelete) {
+                mVibrator.vibrate(50);
+            }
+            centerClockOn(mDeletePoint);
+        }
+
+        private void onTouchInEdit() {
+            if (!inEdit) {
+                mVibrator.vibrate(50);
+            }
+            centerClockOn(mEditPoint);
+        }
+
+        private boolean hasMovedToDelete(MotionEvent event) {
+            return inCircle((int) event.getRawX(), (int) event.getRawY(), 200, mDeletePoint);
+        }
+
+        private boolean hasMovedToEdit(MotionEvent event) {
+            return inCircle((int) event.getRawX(), (int) event.getRawY(), 200, mEditPoint);
+        }
+
+        private boolean inCircle(int x, int y, int radius, Point center) {
+            double xComp = Math.pow((center.x - x), 2);
+            double yComp = Math.pow((center.y - y), 2);
+            double distance = Math.sqrt(xComp + yComp);
+            return distance <= radius;
         }
     }
 }
