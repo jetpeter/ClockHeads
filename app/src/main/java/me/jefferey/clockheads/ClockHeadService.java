@@ -1,5 +1,7 @@
 package me.jefferey.clockheads;
 
+import android.animation.Animator;
+import android.animation.ValueAnimator;
 import android.app.Service;
 import android.content.Intent;
 import android.content.res.Resources;
@@ -8,6 +10,7 @@ import android.graphics.Point;
 import android.os.CountDownTimer;
 import android.os.IBinder;
 import android.os.Vibrator;
+import android.util.Log;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -28,20 +31,19 @@ public class ClockHeadService extends Service {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT);
 
-    // Initialize the layout params for the clock view
+    // Initialize the layout params for the delete view
     private final WindowManager.LayoutParams mDeleteLayoutParams = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT);
 
     private final Point mDeletePoint = new Point();
     private final Point mEditPoint = new Point();
-    private Point mDisplaySize = new Point();
 
     private WindowManager mWindowManager;
     private TextView mClockView;
@@ -60,8 +62,6 @@ public class ClockHeadService extends Service {
         LayoutInflater inflater = LayoutInflater.from(this);
         mWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         mVibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-        Display display =  mWindowManager.getDefaultDisplay();
-        display.getSize(mDisplaySize);
         mClockView = (TextView) inflater.inflate(R.layout.service_clock_head, null);
         mClockLayoutParams.gravity = Gravity.TOP | Gravity.START;
         mClockView.setOnTouchListener(mClockTouchListener);
@@ -70,7 +70,6 @@ public class ClockHeadService extends Service {
         mDeleteView = new ImageView(this);
         mDeleteView.setImageResource(R.drawable.delete_square);
         mDeleteLayoutParams.gravity = Gravity.TOP | Gravity.START;
-        initEditPoints();
         setTimerFor(100000);
     }
 
@@ -111,13 +110,6 @@ public class ClockHeadService extends Service {
         mWindowManager.updateViewLayout(view, layoutParams);
     }
 
-    private void initEditPoints() {
-        int displayCenter = mDisplaySize.x / 2;
-        Resources res = getResources();
-        int editEdgeOffset = res.getDimensionPixelSize(R.dimen.edit_edge_offset);
-        mDeletePoint.set(displayCenter, mDisplaySize.y - editEdgeOffset);
-        mEditPoint.set(displayCenter, editEdgeOffset);
-    }
 
     private class ClockOnTouchListener implements View.OnTouchListener {
 
@@ -130,19 +122,23 @@ public class ClockHeadService extends Service {
         private boolean inDelete;
         private boolean inEdit;
 
+        private boolean isDeleteShowing;
+
+        private final Point adjustedDeletePoint = new Point();
+
         @Override
         public boolean onTouch(View v, MotionEvent event) {
+            Log.v("Event", event.toString());
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
                     startTracking(event);
                     return false;
+                case MotionEvent.ACTION_CANCEL:
                 case MotionEvent.ACTION_UP:
-                    if (inDelete) {
-                        deleteClock();
-                    }
-                    mWindowManager.removeView(mDeleteView);
+                    stopTracking(event);
                     return false;
                 case MotionEvent.ACTION_MOVE:
+                    updateDeletePointPosition(event);
                     if (hasMovedToDelete(event)) {
                         onTouchInDelete();
                         inDelete = true;
@@ -156,14 +152,9 @@ public class ClockHeadService extends Service {
                         inDelete = false;
                         inEdit = false;
                     }
-                    centerViewOn(mDeletePoint, mDeleteView, mDeleteLayoutParams);
                     return true;
             }
             return false;
-        }
-
-        private void deleteClock() {
-            stopSelf();
         }
 
         private void startTracking(MotionEvent event) {
@@ -171,7 +162,91 @@ public class ClockHeadService extends Service {
             initialY = mClockLayoutParams.y;
             initialTouchX = event.getRawX();
             initialTouchY = event.getRawY();
-            mWindowManager.addView(mDeleteView, mDeleteLayoutParams);
+            if (!isDeleteShowing) {
+                mWindowManager.addView(mDeleteView, mDeleteLayoutParams);
+                isDeleteShowing = true;
+            }
+            Point displaySize = new Point();
+            Display display =  mWindowManager.getDefaultDisplay();
+            display.getSize(displaySize);
+            int displayCenterX = displaySize.x / 2;
+            initDeletePoint(displayCenterX, displaySize.y, event);
+            initEditPoint(displayCenterX, displaySize.y);
+        }
+
+        private void initDeletePoint(int displayCenterX, int dispalyHeight, final MotionEvent event) {
+            Resources res = getResources();
+            int editEdgeOffset = res.getDimensionPixelSize(R.dimen.edit_edge_offset);
+            mDeletePoint.x = displayCenterX;
+            ValueAnimator animator = ValueAnimator.ofInt(dispalyHeight, dispalyHeight - editEdgeOffset);
+            animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(ValueAnimator animation) {
+                    mDeletePoint.y = (int) animation.getAnimatedValue();
+                    updateDeletePointPosition(event);
+                }
+            });
+            animator.start();
+        }
+
+        private void updateDeletePointPosition(MotionEvent event) {
+            int adjustX = (mDeletePoint.x - (int) event.getRawX()) / 20;
+            int adjustY = (mDeletePoint.y - (int) event.getRawY()) / 20;
+
+            adjustedDeletePoint.set(mDeletePoint.x - adjustX, mDeletePoint.y - adjustY);
+            centerViewOn(adjustedDeletePoint, mDeleteView, mDeleteLayoutParams);
+        }
+
+        private void initEditPoint(int displayCenterX, int dispalyHeight) {
+            Resources res = getResources();
+            int editEdgeOffset = res.getDimensionPixelSize(R.dimen.edit_edge_offset);
+            mEditPoint.set(displayCenterX, editEdgeOffset);
+        }
+
+        private void stopTracking(MotionEvent event) {
+            if (inDelete) {
+                stopSelf();
+            }
+            Point displaySize = new Point();
+            Display display =  mWindowManager.getDefaultDisplay();
+            display.getSize(displaySize);
+            removeDeletePoint(displaySize.y, event);
+        }
+
+        private void removeDeletePoint(int dispalyHeight, final MotionEvent event) {
+            Resources res = getResources();
+            int editEdgeOffset = res.getDimensionPixelSize(R.dimen.edit_edge_offset);
+            ValueAnimator animator = ValueAnimator.ofInt(dispalyHeight - editEdgeOffset, dispalyHeight);
+            animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(ValueAnimator animation) {
+                    mDeletePoint.y = (int) animation.getAnimatedValue();
+                    updateDeletePointPosition(event);
+                }
+            });
+            animator.addListener(new Animator.AnimatorListener() {
+                @Override
+                public void onAnimationStart(Animator animation) {
+
+                }
+
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    mWindowManager.removeView(mDeleteView);
+                    isDeleteShowing = false;
+                }
+
+                @Override
+                public void onAnimationCancel(Animator animation) {
+
+                }
+
+                @Override
+                public void onAnimationRepeat(Animator animation) {
+
+                }
+            });
+            animator.start();
         }
 
         private void updateClockPosition(MotionEvent event) {
@@ -182,14 +257,14 @@ public class ClockHeadService extends Service {
 
         private void onTouchInDelete() {
             if (!inDelete) {
-                mVibrator.vibrate(50);
+                mVibrator.vibrate(20);
             }
-            centerViewOn(mDeletePoint, mClockView, mClockLayoutParams);
+            centerViewOn(adjustedDeletePoint, mClockView, mClockLayoutParams);
         }
 
         private void onTouchInEdit() {
             if (!inEdit) {
-                mVibrator.vibrate(50);
+                mVibrator.vibrate(20);
             }
             centerViewOn(mEditPoint, mClockView, mClockLayoutParams);
         }
