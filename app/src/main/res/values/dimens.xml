@@ -4,5 +4,6 @@
     <dimen name="activity_vertical_margin">16dp</dimen>
     <dimen name="init_clock_top_padding">100dp</dimen>
     <dimen name="edit_edge_offset">100dp</dimen>
+    <dimen name="throttle_size">60dp</dimen>
 
 </resources>

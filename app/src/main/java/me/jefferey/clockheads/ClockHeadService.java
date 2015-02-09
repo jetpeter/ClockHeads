@@ -8,6 +8,7 @@ import android.content.res.Resources;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.os.CountDownTimer;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.Vibrator;
 import android.util.Log;
@@ -24,7 +25,8 @@ import java.util.Locale;
 
 public class ClockHeadService extends Service {
 
-    private static final int OFFSCREEN_OFFSET = 200;
+    private static final int OFFSCREEN_OFFSET = 250;
+    private static final int IN_CIRCLE_SLOP = 200;
 
     private final ClockOnTouchListener mClockTouchListener =  new ClockOnTouchListener();
     // Initialize the layout params for the clock view
@@ -43,8 +45,16 @@ public class ClockHeadService extends Service {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT);
 
-    // Initialize the layout params for the delete view
+    // Initialize the layout params for the edit view
     private final WindowManager.LayoutParams mEditLayoutParams = new WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT);
+
+    // Initialize the layout params for the throttle view
+    private final WindowManager.LayoutParams mThrottleLayoutParams = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_PHONE,
@@ -53,17 +63,17 @@ public class ClockHeadService extends Service {
 
     private final Point mDeletePoint = new Point();
     private final Point mEditPoint = new Point();
+    private final Point mThrottleCenter = new Point();
+
+    private CountDownTimer mCurrentCountDownTimer;
+    private long mTimeRemainingMiliseconds;
+    private Vibrator mVibrator;
 
     private WindowManager mWindowManager;
     private TextView mClockView;
     private ImageView mDeleteView;
     private ImageView mEditView;
-    private ImageView mThrottle;
-    private CountDownTimer mCurrentCountDownTimer;
-    private Vibrator mVibrator;
-
-    private ValueAnimator mDeleteAnimator;
-    private ValueAnimator mEditAnimator;
+    private View mThrottleView;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -89,7 +99,12 @@ public class ClockHeadService extends Service {
         mEditView.setImageResource(R.drawable.edit_square);
         mEditLayoutParams.gravity = Gravity.TOP | Gravity.START;
 
-        setTimerFor(100000);
+        mThrottleView = inflater.inflate(R.layout.throttle, null);
+        mThrottleView.setOnTouchListener(new ThrottleOnTouchListener());
+        mThrottleLayoutParams.gravity = Gravity.TOP | Gravity.START;
+        mThrottleLayoutParams.width = getResources().getDimensionPixelOffset(R.dimen.throttle_size);
+        mThrottleLayoutParams.height = getResources().getDimensionPixelOffset(R.dimen.throttle_size);
+        setClockText(0);
     }
 
     @Override
@@ -101,26 +116,30 @@ public class ClockHeadService extends Service {
     }
 
     private void setTimerFor(long timeInMiliseconds) {
-
         mCurrentCountDownTimer = new CountDownTimer(timeInMiliseconds, 1000) {
-
             public void onTick(long millisUntilFinished) {
-                long secondsUntilFinished = millisUntilFinished / 1000;
-                StringBuilder builder = new StringBuilder();
-                long hours = secondsUntilFinished / 36000;
-                long minutes = (secondsUntilFinished % 3600) / 60;
-                long seconds = secondsUntilFinished % 60;
-                if (hours > 0) {
-                    builder.append(String.format(Locale.US, "%02d:", hours));
-                }
-                builder.append(String.format(Locale.US, "%02d:", minutes));
-                builder.append(String.format(Locale.US, "%02d", seconds));
-                mClockView.setText(builder.toString());
+                setClockText(millisUntilFinished);
+                mTimeRemainingMiliseconds = millisUntilFinished;
             }
             public void onFinish() {
             }
         };
         mCurrentCountDownTimer.start();
+    }
+
+    private void setClockText(long timeInMiliseconds) {
+        long secondsUntilFinished = timeInMiliseconds / 1000;
+        StringBuilder builder = new StringBuilder();
+        long hours = secondsUntilFinished / 3600;
+        long minutes = (secondsUntilFinished % 3600) / 60;
+        long seconds = secondsUntilFinished % 60;
+        Log.v("Hours", "" + hours);
+        if (hours > 0) {
+            builder.append(String.format(Locale.US, "%02d:", hours));
+        }
+        builder.append(String.format(Locale.US, "%02d:", minutes));
+        builder.append(String.format(Locale.US, "%02d", seconds));
+        mClockView.setText(builder.toString());
     }
 
     private void centerViewOn(Point point, View view, WindowManager.LayoutParams layoutParams) {
@@ -137,15 +156,19 @@ public class ClockHeadService extends Service {
         private int initialX;
         private int initialY;
 
-        private boolean inDelete;
-        private boolean inEdit;
+        private boolean currentTouchInDelete;
+        private boolean currentTouchInEdit;
+        private boolean inEditMode;
+
 
         private final Point adjustedDeletePoint = new Point();
         private final Point adjustedEditPoint = new Point();
 
+        private ValueAnimator mDeleteAnimator;
+        private ValueAnimator mEditAnimator;
+
         @Override
         public boolean onTouch(View v, MotionEvent event) {
-            Log.v("Event", event.toString());
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
                     startTracking(event);
@@ -159,16 +182,16 @@ public class ClockHeadService extends Service {
                     updateEditPointPosition(event);
                     if (hasMovedToDelete(event)) {
                         onTouchInDelete();
-                        inDelete = true;
-                        inEdit = false;
+                        currentTouchInDelete = true;
+                        currentTouchInEdit = false;
                     } else if (hasMovedToEdit(event)){
                         onTouchInEdit();
-                        inDelete = false;
-                        inEdit = true;
+                        currentTouchInDelete = false;
+                        currentTouchInEdit = true;
                     } else {
                         updateClockPosition(event);
-                        inDelete = false;
-                        inEdit = false;
+                        currentTouchInDelete = false;
+                        currentTouchInEdit = false;
                     }
                     return true;
             }
@@ -176,6 +199,10 @@ public class ClockHeadService extends Service {
         }
 
         private void startTracking(MotionEvent event) {
+            if (inEditMode) {
+                mWindowManager.removeView(mThrottleView);
+                inEditMode = false;
+            }
             initialX = mClockLayoutParams.x;
             initialY = mClockLayoutParams.y;
             initialTouchX = event.getRawX();
@@ -248,11 +275,26 @@ public class ClockHeadService extends Service {
         }
 
         private void stopTracking(MotionEvent event) {
-            if (inDelete) {
+            if (currentTouchInDelete) {
                 stopSelf();
             }
+            if (currentTouchInEdit) {
+                inEditMode = true;
+                if (mCurrentCountDownTimer != null) {
+                    mCurrentCountDownTimer.cancel();
+                }
+                addThrottle();
+            }
+            currentTouchInDelete = false;
+            currentTouchInEdit = false;
             removeDeletePoint(event);
             removeEditPoint(event);
+        }
+
+        private void addThrottle() {
+            mThrottleLayoutParams.x = mThrottleCenter.x = mClockLayoutParams.x + (mClockView.getWidth());
+            mThrottleLayoutParams.y = mThrottleCenter.y = mClockLayoutParams.y + (mClockView.getHeight() / 4);
+            mWindowManager.addView(mThrottleView, mThrottleLayoutParams);
         }
 
         private void removeDeletePoint(final MotionEvent event) {
@@ -326,25 +368,25 @@ public class ClockHeadService extends Service {
         }
 
         private void onTouchInDelete() {
-            if (!inDelete) {
+            if (!currentTouchInDelete) {
                 mVibrator.vibrate(20);
             }
             centerViewOn(adjustedDeletePoint, mClockView, mClockLayoutParams);
         }
 
         private void onTouchInEdit() {
-            if (!inEdit) {
+            if (!currentTouchInEdit) {
                 mVibrator.vibrate(20);
             }
             centerViewOn(adjustedEditPoint, mClockView, mClockLayoutParams);
         }
 
         private boolean hasMovedToDelete(MotionEvent event) {
-            return inCircle((int) event.getRawX(), (int) event.getRawY(), OFFSCREEN_OFFSET, mDeletePoint);
+            return inCircle((int) event.getRawX(), (int) event.getRawY(), IN_CIRCLE_SLOP, mDeletePoint);
         }
 
         private boolean hasMovedToEdit(MotionEvent event) {
-            return inCircle((int) event.getRawX(), (int) event.getRawY(), OFFSCREEN_OFFSET, mEditPoint);
+            return inCircle((int) event.getRawX(), (int) event.getRawY(), IN_CIRCLE_SLOP, mEditPoint);
         }
 
         private boolean inCircle(int x, int y, int radius, Point center) {
@@ -353,5 +395,54 @@ public class ClockHeadService extends Service {
             double distance = Math.sqrt(xComp + yComp);
             return distance <= radius;
         }
+    }
+
+    private class ThrottleOnTouchListener implements View.OnTouchListener {
+
+        private float initialTouchY;
+
+        private int rateOfChange = 0;
+
+        private Handler handler = new Handler();
+
+        @Override
+        public boolean onTouch(View v, MotionEvent event) {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    initialTouchY = event.getRawY();
+                    rateOfChange = 0;
+                    handler.post(timeChangingRunnable);
+                    return false;
+                case MotionEvent.ACTION_CANCEL:
+                case MotionEvent.ACTION_UP:
+                    handler.removeCallbacks(timeChangingRunnable);
+                    mThrottleLayoutParams.x = mThrottleCenter.x;
+                    mThrottleLayoutParams.y = mThrottleCenter.y;
+                    mWindowManager.updateViewLayout(mThrottleView, mThrottleLayoutParams);
+                    return false;
+                case MotionEvent.ACTION_MOVE:
+                    mThrottleLayoutParams.y = mThrottleCenter.y + (int) (event.getRawY() - initialTouchY);
+                    mWindowManager.updateViewLayout(mThrottleView, mThrottleLayoutParams);
+                    float offset = initialTouchY - event.getRawY();
+                    rateOfChange = (offset > 0 ? 1 : -1) * (int) (Math.pow(2, Math.abs(offset) / 20) + 1000);
+                    Log.v("", "Rate of change: " + rateOfChange + "    Offset: " + offset);
+                    return true;
+            }
+            return false;
+        }
+
+        private Runnable timeChangingRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (mTimeRemainingMiliseconds + rateOfChange > 0) {
+                    mTimeRemainingMiliseconds += rateOfChange;
+                } else {
+                    mTimeRemainingMiliseconds = 0;
+                }
+                setClockText(mTimeRemainingMiliseconds);
+                handler.postDelayed(timeChangingRunnable, 100);
+            }
+        };
+
     }
 }
