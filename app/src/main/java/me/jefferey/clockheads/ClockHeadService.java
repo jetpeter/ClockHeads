@@ -11,7 +11,6 @@ import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Vibrator;
-import android.util.Log;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -66,7 +65,7 @@ public class ClockHeadService extends Service {
     private final Point mThrottleCenter = new Point();
 
     private CountDownTimer mCurrentCountDownTimer;
-    private long mTimeRemainingMiliseconds;
+    private long mTimeRemainingMilliseconds;
     private Vibrator mVibrator;
 
     private WindowManager mWindowManager;
@@ -115,11 +114,11 @@ public class ClockHeadService extends Service {
         }
     }
 
-    private void setTimerFor(long timeInMiliseconds) {
-        mCurrentCountDownTimer = new CountDownTimer(timeInMiliseconds, 1000) {
+    private void setTimerFor(long timeInMilliseconds) {
+        mCurrentCountDownTimer = new CountDownTimer(timeInMilliseconds, 1000) {
             public void onTick(long millisUntilFinished) {
                 setClockText(millisUntilFinished);
-                mTimeRemainingMiliseconds = millisUntilFinished;
+                mTimeRemainingMilliseconds = millisUntilFinished;
             }
             public void onFinish() {
             }
@@ -127,13 +126,12 @@ public class ClockHeadService extends Service {
         mCurrentCountDownTimer.start();
     }
 
-    private void setClockText(long timeInMiliseconds) {
-        long secondsUntilFinished = timeInMiliseconds / 1000;
+    private void setClockText(long timeInMilliseconds) {
+        long secondsUntilFinished = timeInMilliseconds / 1000;
         StringBuilder builder = new StringBuilder();
         long hours = secondsUntilFinished / 3600;
         long minutes = (secondsUntilFinished % 3600) / 60;
         long seconds = secondsUntilFinished % 60;
-        Log.v("Hours", "" + hours);
         if (hours > 0) {
             builder.append(String.format(Locale.US, "%02d:", hours));
         }
@@ -166,6 +164,7 @@ public class ClockHeadService extends Service {
 
         private ValueAnimator mDeleteAnimator;
         private ValueAnimator mEditAnimator;
+        private ValueAnimator mThrottleAnimator;
 
         @Override
         public boolean onTouch(View v, MotionEvent event) {
@@ -200,7 +199,11 @@ public class ClockHeadService extends Service {
 
         private void startTracking(MotionEvent event) {
             if (inEditMode) {
+                if (mThrottleAnimator != null && mThrottleAnimator.isRunning()) {
+                    mThrottleAnimator.cancel();
+                }
                 mWindowManager.removeView(mThrottleView);
+                setTimerFor(mTimeRemainingMilliseconds);
                 inEditMode = false;
             }
             initialX = mClockLayoutParams.x;
@@ -229,7 +232,7 @@ public class ClockHeadService extends Service {
 
         private void initDeletePoint(int displayCenterX, int displayHeight, final MotionEvent event) {
             Resources res = getResources();
-            int editEdgeOffset = res.getDimensionPixelSize(R.dimen.edit_edge_offset);
+            int editEdgeOffset = res.getDimensionPixelSize(R.dimen.delete_edge_offset);
             mDeletePoint.x = displayCenterX;
             ValueAnimator animator = ValueAnimator.ofInt(mDeletePoint.y, displayHeight - editEdgeOffset);
             animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
@@ -292,9 +295,18 @@ public class ClockHeadService extends Service {
         }
 
         private void addThrottle() {
-            mThrottleLayoutParams.x = mThrottleCenter.x = mClockLayoutParams.x + (mClockView.getWidth());
+            mThrottleCenter.x = mClockLayoutParams.x + mClockView.getWidth();
             mThrottleLayoutParams.y = mThrottleCenter.y = mClockLayoutParams.y + (mClockView.getHeight() / 4);
             mWindowManager.addView(mThrottleView, mThrottleLayoutParams);
+            mThrottleAnimator = ValueAnimator.ofInt(mEditPoint.x, mClockLayoutParams.x + mClockView.getWidth());
+            mThrottleAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(ValueAnimator animation) {
+                    mThrottleLayoutParams.x = (int) animation.getAnimatedValue();
+                    mWindowManager.updateViewLayout(mThrottleView, mThrottleLayoutParams);
+                }
+            });
+            mThrottleAnimator.start();
         }
 
         private void removeDeletePoint(final MotionEvent event) {
@@ -425,7 +437,6 @@ public class ClockHeadService extends Service {
                     mWindowManager.updateViewLayout(mThrottleView, mThrottleLayoutParams);
                     float offset = initialTouchY - event.getRawY();
                     rateOfChange = (offset > 0 ? 1 : -1) * (int) (Math.pow(2, Math.abs(offset) / 20) + 1000);
-                    Log.v("", "Rate of change: " + rateOfChange + "    Offset: " + offset);
                     return true;
             }
             return false;
@@ -434,12 +445,12 @@ public class ClockHeadService extends Service {
         private Runnable timeChangingRunnable = new Runnable() {
             @Override
             public void run() {
-                if (mTimeRemainingMiliseconds + rateOfChange > 0) {
-                    mTimeRemainingMiliseconds += rateOfChange;
+                if (mTimeRemainingMilliseconds + rateOfChange > 0) {
+                    mTimeRemainingMilliseconds += rateOfChange;
                 } else {
-                    mTimeRemainingMiliseconds = 0;
+                    mTimeRemainingMilliseconds = 0;
                 }
-                setClockText(mTimeRemainingMiliseconds);
+                setClockText(mTimeRemainingMilliseconds);
                 handler.postDelayed(timeChangingRunnable, 100);
             }
         };
