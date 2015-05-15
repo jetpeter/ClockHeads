@@ -4,7 +4,7 @@ Add a countdown timer overlay to your home screen!
 
 This application starts a service that attaches views directly to the window manager. Never loose track of your timer again! To set a timer use the create timer button in the application then drag the timer to the clock icon.  Then using the throttle thumb adjust the time. Moving the timer away from the clock icon will start the timer.
 
-Warning: This application was built mostly to play with the windiow manager from a service.  It functions very poorly as a timer and you would be crazy to use it as such.
+Warning: This application was built mostly to play with the window manager from a service.  It functions very poorly as a timer and you would be crazy to use it as such.
 
 ##TODO
 Add a notification when the timer reaches zero
